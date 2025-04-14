@@ -17,7 +17,7 @@ import numpy as np
 import gc
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-
+from pandas.errors import EmptyDataError
 class AudioAnnotator:
     def __init__(self, root):
         self.root = root
@@ -154,10 +154,16 @@ class AudioAnnotator:
         for widget in self.labels_button_frame.winfo_children():
             widget.destroy()
 
+        self.label_buttons = []  # reset list
         for label in self.label_options:
-            btn = ttk.Button(self.labels_button_frame, text=label, width=20,
-                             command=lambda l=label: self.label_segment(l),
-                             bootstyle=SECONDARY, state=tk.DISABLED)
+            btn = ttk.Button(
+                self.labels_button_frame,
+                text=label,
+                width=20,
+                command=lambda l=label: self.label_segment(l),
+                bootstyle=SECONDARY,
+                state=tk.NORMAL  # <--- always re-enable
+            )
             btn.pack(pady=2)
             self.label_buttons.append(btn)
 
@@ -178,14 +184,20 @@ class AudioAnnotator:
         sd.stop()
         gc.collect()
 
+
+
     def load_csv(self):
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
         if path:
-            self.df = pd.read_csv(path, dtype=str)
+            try:
+                self.df = pd.read_csv(path, dtype=str)
+            except EmptyDataError:
+                self.df = pd.DataFrame()
+
             if self.df.empty:
                 messagebox.showinfo("Info", "CSV is empty. All audio files in the selected folder will be used.")
                 self.filename_column = None
-                self.full_file_list = []  # We'll load from folder later
+                self.full_file_list = []  # will populate later in set_audio_folder
             else:
                 default_column = self.df.columns[0]
                 self.filename_column = simpledialog.askstring("CSV Column", "Enter the column name for filenames:",
@@ -197,7 +209,8 @@ class AudioAnnotator:
 
             self.csv_loaded = True
             self.audio_btn.config(state=tk.NORMAL)
-            self.status_label.config(text="CSV loaded.")
+            self.status_label.config(
+                text=f"CSV loaded. {len(self.full_file_list)} files listed (or will be auto-loaded).")
 
     def set_audio_folder(self):
         self.audio_folder = filedialog.askdirectory()
@@ -205,6 +218,11 @@ class AudioAnnotator:
             self.audio_folder_set = True
             if self.df is not None and self.df.empty:
                 self.full_file_list = [f for f in os.listdir(self.audio_folder) if f.lower().endswith(('.wav', '.mp3'))]
+            else:
+                # In case full_file_list isn't already set by load_csv
+                if not self.full_file_list:
+                    self.full_file_list = [f for f in os.listdir(self.audio_folder) if
+                                           f in self.df[self.filename_column].tolist()]
             self.output_btn.config(state=tk.NORMAL)
             self.status_label.config(text=f"Audio folder selected. {len(self.full_file_list)} files ready.")
 
@@ -229,6 +247,10 @@ class AudioAnnotator:
         self.file_list = [f for f in self.full_file_list if f not in self.annotated_files]
 
     def start_annotation(self):
+        if not self.file_list:
+            messagebox.showwarning("No Files", "No audio files available to annotate.")
+            return
+
         self.output_sample_rate = int(self.output_sr_entry.get())
         self.segment_duration = int(self.segment_duration_entry.get())
         self.time_label.config(text="Click to select a point in the audio")
@@ -249,7 +271,11 @@ class AudioAnnotator:
         self.stop_playback()
         while self.current_index < len(self.file_list):
             self.original_filename = str(self.file_list[self.current_index])
-            self.current_metadata = self.df[self.df[self.filename_column] == self.original_filename].iloc[0]
+            if self.filename_column:
+                self.current_metadata = self.df[self.df[self.filename_column] == self.original_filename].iloc[0]
+            else:
+                self.current_metadata = pd.Series({"original_filename": self.original_filename})
+
             self.current_filename = os.path.join(self.audio_folder, self.original_filename)
 
             if not os.path.exists(self.current_filename):
@@ -331,7 +357,15 @@ class AudioAnnotator:
         gc.collect()
 
         row_dict = self.current_metadata.to_dict()
-        row_dict.update({"filename": base_name + ".wav", "original_filename": self.original_filename, "Second": start_sec, "Label": label})
+        row_dict = self.current_metadata.to_dict()
+        row_dict.update({
+            "filename": base_name + ".wav",
+            "original_filename": self.original_filename,
+            "Second": start_sec,
+            "Label": label,
+            "saved_clip": segment_filename  # 👈 this adds the saved file name
+        })
+
         new_row_df = pd.DataFrame([row_dict])
 
         if not os.path.exists(self.annotation_csv):
