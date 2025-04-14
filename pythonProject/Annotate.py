@@ -182,22 +182,31 @@ class AudioAnnotator:
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
         if path:
             self.df = pd.read_csv(path, dtype=str)
-            default_column = self.df.columns[0] if not self.df.empty else ""
-            self.filename_column = simpledialog.askstring("CSV Column", "Enter the column name for filenames:", initialvalue=default_column, parent=self.root)
-            if self.filename_column not in self.df.columns:
-                messagebox.showerror("Column Error", f"Column '{self.filename_column}' not found in CSV.")
-                return
-            self.full_file_list = self.df[self.filename_column].tolist()
+            if self.df.empty:
+                messagebox.showinfo("Info", "CSV is empty. All audio files in the selected folder will be used.")
+                self.filename_column = None
+                self.full_file_list = []  # We'll load from folder later
+            else:
+                default_column = self.df.columns[0]
+                self.filename_column = simpledialog.askstring("CSV Column", "Enter the column name for filenames:",
+                                                              initialvalue=default_column, parent=self.root)
+                if self.filename_column not in self.df.columns:
+                    messagebox.showerror("Column Error", f"Column '{self.filename_column}' not found in CSV.")
+                    return
+                self.full_file_list = self.df[self.filename_column].tolist()
+
             self.csv_loaded = True
             self.audio_btn.config(state=tk.NORMAL)
-            self.status_label.config(text=f"CSV loaded. {len(self.full_file_list)} files listed.")
+            self.status_label.config(text="CSV loaded.")
 
     def set_audio_folder(self):
         self.audio_folder = filedialog.askdirectory()
         if self.audio_folder:
             self.audio_folder_set = True
+            if self.df is not None and self.df.empty:
+                self.full_file_list = [f for f in os.listdir(self.audio_folder) if f.lower().endswith(('.wav', '.mp3'))]
             self.output_btn.config(state=tk.NORMAL)
-            self.status_label.config(text=f"Audio folder selected.")
+            self.status_label.config(text=f"Audio folder selected. {len(self.full_file_list)} files ready.")
 
     def set_output_folder(self):
         self.output_folder = filedialog.askdirectory()
@@ -248,7 +257,7 @@ class AudioAnnotator:
                 continue
 
             self.full_audio_data, self.sample_rate = sf.read(self.current_filename, dtype='float32')
-            display_audio = self.full_audio_data[:min(len(self.full_audio_data), self.sample_rate * 60)]
+            display_audio = self.full_audio_data[:min(len(self.full_audio_data), self.sample_rate * 300)]
             self.audio_data = display_audio
             self.sr_label.config(text=f"Sample rate: {self.sample_rate} Hz")
             self.draw_spectrogram()
